@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oz-tracker"
+version = "0.1.0"
+description = "Opportunity Zone investment tracker — OZ 1.0 and OZ 2.0 eligibility, QOF tax benefits, rural QORF analysis, and portfolio tracking"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = [
+    "pandas>=1.4.0",
+    "numpy>=1.21.0",
+    "requests>=2.27.0",
+    "openpyxl>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Jaypatel1511/oz-tracker"
