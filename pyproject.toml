@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oz-tracker"
-version = "0.1.0"
-description = "Opportunity Zone investment tracker — OZ 1.0 and OZ 2.0 eligibility, QOF tax benefits, rural QORF analysis, and portfolio tracking"
+version = "0.2.0"
+description = "Opportunity Zone tracker — QOF tax-benefit and portfolio modeling. NOTE: OZ tract lookup is NON-FUNCTIONAL in 0.2.0; both upstream data sources return 404, and this version raises a typed error rather than returning fabricated results. See README."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
+authors = [{name = "Jay Patel", email = "thejaypatel1511@gmail.com"}]
 dependencies = [
     "pandas>=1.4.0",
     "numpy>=1.21.0",

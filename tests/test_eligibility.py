@@ -26,27 +26,7 @@ def test_oz2_not_eligible():
     assert check_oz2_eligibility(poverty_rate=0.15, ami_ratio=0.85) == False
 
 
-def test_oz1_checker_designated(oz1_checker):
-    assert oz1_checker.is_designated("17031840100") == True
-
-
-def test_oz1_checker_not_designated(oz1_checker):
-    assert oz1_checker.is_designated("99999999999") == False
-
-
-def test_oz1_checker_batch(oz1_checker):
-    result = oz1_checker.check_batch(["17031840100", "99999999999"])
-    assert result["17031840100"] == True
-    assert result["99999999999"] == False
-
-
-def test_oz2_checker_eligible(oz2_checker):
-    assert oz2_checker.is_eligible("17031840100") == True
-
-
-def test_oz2_checker_rural(oz2_checker):
-    assert oz2_checker.is_rural("17019000100") == True
-
-
-def test_oz2_checker_not_rural(oz2_checker):
-    assert oz2_checker.is_rural("17031840100") == False
+# The checker-level assertions that used to live here asserted the 0.1.0
+# fabricated-negative contract (`is_designated("99999999999") == False`).
+# They are replaced by tests/test_tristate.py, which pins the 0.2.0
+# True/None contract on the same public entry points.

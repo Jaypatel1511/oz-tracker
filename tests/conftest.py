@@ -5,27 +5,41 @@ from oztracker.eligibility.oz2 import OZ2Checker
 from oztracker.portfolio.tracker import OZPortfolio
 
 
-@pytest.fixture
-def oz1_checker(monkeypatch):
-    monkeypatch.setattr(
-        "oztracker.data.loader.load_oz1_tracts",
-        lambda force=False: {
-            "17031840100", "17031839100", "26163518300",
-            "36061015900", "13121010400", "48113010900",
-        }
-    )
-    return OZ1Checker()
+# ── Verified-real census tracts, for tests that must NOT use sample GEOIDs ────
+#
+# Classified against ~/recon-2026-07-30/geo/universes.pkl using the CORRECTED
+# detector (gazetteer2024 ∪ rel2020 = "real now"), not the 2020 universe alone —
+# the latter false-positives all 884 Connecticut tracts (RECON_2026-07-30 §B-0).
+# None of these appear in the built-in sample sets, which is the point: they are
+# real tracts the sample cannot answer for.
+REAL_TRACTS_NOT_IN_SAMPLE = [
+    "17031838200",  # Cook County, IL
+    "12086003100",  # Miami-Dade County, FL
+    "42101037300",  # Philadelphia County, PA
+    "26163517200",  # Wayne County, MI
+    "53033010001",  # King County, WA
+]
+
+# Structurally impossible GEOID (11 nines) — not a tract in any vintage.
+NOT_A_GEOID = "99999999999"
 
 
 @pytest.fixture
-def oz2_checker(monkeypatch):
-    monkeypatch.setattr(
-        "oztracker.data.loader.load_oz2_eligible_tracts",
-        lambda force=False: __import__(
-            'oztracker.data.loader', fromlist=['_sample_oz2_dataframe']
-        )._sample_oz2_dataframe()
-    )
-    return OZ2Checker()
+def oz1_checker():
+    """A checker on the EXPLICIT sample set.
+
+    Through 0.1.0 this fixture monkeypatched ``oztracker.data.loader``, which
+    did not even work — ``oz1.py`` binds the loader name at import time, so the
+    patch was a no-op and every test made a live network call that 404'd and
+    silently landed on the sample fallback. The tests passed only because the
+    fabrication path existed. ``from_sample()`` gives real isolation.
+    """
+    return OZ1Checker.from_sample()
+
+
+@pytest.fixture
+def oz2_checker():
+    return OZ2Checker.from_sample()
 
 
 @pytest.fixture
