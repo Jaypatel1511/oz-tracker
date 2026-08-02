@@ -5,9 +5,15 @@ STATUS (0.2.0): both upstream URLs below return HTTP 404 (verified 2026-07-30).
 Every loader in this module therefore raises OZDownloadError in practice. That
 is deliberate: through 0.1.0 these functions silently returned an 8-row
 hardcoded sample on any failure, which made ``is_designated()`` answer a
-confident, wrong ``False`` for 99.91% of real designated tracts. Restoring live
-OZ data is deferred until the nmtc-mapper 0.5.0 census-tract vintage decision;
-see the README.
+confident, wrong ``False`` for 99.91% of real designated tracts.
+
+Restoration is deferred for a DIFFERENT reason per checker (see the README):
+OZ 1.0 is blocked on the census-tract vintage question (a 2010-basis
+designation list vs. current-vintage caller GEOIDs), pending nmtc-mapper 0.5.0.
+OZ 2.0 is NOT blocked on vintage — Rev. Proc. 2026-14 §3.01(1) derives the
+eligible list from the 2020-2024 ACS 5-Year and 2020 DECIA data sets, i.e.
+2020-basis, and its Appendix is live (verified 2026-08-02: HTTP 200, 25,332
+rows). OZ 2.0 is deferred purely on scope: 0.2.0 adds no data paths.
 
 Sample data still exists but is reachable ONLY through the explicitly named
 ``load_sample_oz1_tracts()`` / ``load_sample_oz2_dataframe()`` entry points, or
@@ -20,7 +26,7 @@ from pathlib import Path
 
 from oztracker.exceptions import OZTrackerError, OZDownloadError, OZParseError
 from oztracker.data.schema import (
-    OZTract, OZ1_MFI_THRESHOLD, OZ1_POVERTY_THRESHOLD,
+    OZ1_MFI_THRESHOLD, OZ1_POVERTY_THRESHOLD,
     OZ2_MFI_THRESHOLD, OZ2_POVERTY_THRESHOLD, OZ2_POVERTY_MFI_THRESHOLD,
 )
 
@@ -43,8 +49,37 @@ OZ2_URL = (
 
 
 def get_cache_dir() -> Path:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    """Return the cache directory, creating it if needed.
+
+    A filesystem failure here (read-only home, permission denied, ENOSPC)
+    happens BEFORE any download handler exists, so without this wrapper a bare
+    ``PermissionError`` / ``OSError`` would escape ``load_oz1_tracts()`` past a
+    caller's ``except OZTrackerError``. Wrapped and chained so the load path
+    raises only typed errors.
+    """
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise OZDownloadError(
+            f"Cannot create the oz-tracker cache directory {CACHE_DIR}: "
+            f"{type(e).__name__}: {e}"
+        ) from e
     return CACHE_DIR
+
+
+def _discard(tmp: Path) -> None:
+    """Best-effort removal of the ``.part`` temp during error handling.
+
+    Deliberately swallows OSError: this runs inside ``except`` blocks that are
+    already raising a typed OZDownloadError, and on a failing filesystem the
+    unlink itself can raise — which would replace the typed error with a raw
+    OSError and put an untyped exception back on the load path. A leftover
+    ``.part`` is harmless; nothing ever reads it.
+    """
+    try:
+        tmp.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def _download_to_cache(url: str, path: Path, label: str) -> None:
@@ -54,6 +89,12 @@ def _download_to_cache(url: str, path: Path, label: str) -> None:
     failure can never leave a truncated file at the final cache path — a
     poisoned cache would make every later run parse-fail (or worse, parse
     partially) with no indication why.
+
+    The rename is what guarantees that, not the ``unlink`` cleanup below:
+    ``KeyboardInterrupt`` and ``SystemExit`` are deliberately NOT caught here
+    (see exceptions.py), so on Ctrl-C mid-download no handler runs at all and
+    the only thing left behind is the ``.part`` file. The final cache path is
+    never written to except by ``Path.replace``, which is atomic on POSIX.
     """
     tmp = path.with_suffix(path.suffix + ".part")
     try:
@@ -66,7 +107,7 @@ def _download_to_cache(url: str, path: Path, label: str) -> None:
         tmp.replace(path)
         print(f"Saved to {path}")
     except requests.exceptions.HTTPError as e:
-        tmp.unlink(missing_ok=True)
+        _discard(tmp)
         status = getattr(e.response, "status_code", None)
         if status == 404:
             reason = (
@@ -81,10 +122,20 @@ def _download_to_cache(url: str, path: Path, label: str) -> None:
             f"Failed to download {label} tract list from {url}: {reason}"
         ) from e
     except requests.exceptions.RequestException as e:
-        tmp.unlink(missing_ok=True)
+        _discard(tmp)
         raise OZDownloadError(
             f"Failed to download {label} tract list from {url}: "
             f"connection/DNS/timeout error ({type(e).__name__}: {e})"
+        ) from e
+    except OSError as e:
+        # Filesystem failure while writing the .part file or renaming it into
+        # place (ENOSPC, EACCES, read-only mount). Must be listed AFTER the
+        # requests clauses: RequestException subclasses OSError, so an earlier
+        # position here would swallow every transport error.
+        _discard(tmp)
+        raise OZDownloadError(
+            f"Failed to write {label} tract list to {tmp}: "
+            f"{type(e).__name__}: {e}"
         ) from e
 
 

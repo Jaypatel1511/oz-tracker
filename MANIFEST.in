@@ -1,0 +1,17 @@
+# setuptools' default sdist rules match only tests/test*.py, which silently
+# omitted tests/conftest.py and tests/__init__.py. The shipped suite then failed
+# at collection with "No module named 'tests.conftest'" — anyone auditing
+# oz-tracker from PyPI saw a broken test suite for a release whose entire claim
+# is that it is honest about what it cannot do. Found while verifying the wheel
+# packaging fix; same defect class as sbic-tracker's.
+recursive-include tests *.py
+
+include README.md
+include pyproject.toml
+include setup.py
+
+# examples/ is intentionally NOT shipped in the sdist — the notebook is a repo
+# artifact. It is exercised at release time (it must run end to end), but it is
+# not part of the distributed package.
+prune examples
+global-exclude *.pyc __pycache__/*

@@ -13,7 +13,7 @@ the bug written into the suite as the spec. That assertion is replaced here.
 """
 import pytest
 
-from oztracker import OZ1Checker, OZ2Checker
+from oztracker import OZ1Checker, OZ2Checker, OZTract
 from tests.conftest import REAL_TRACTS_NOT_IN_SAMPLE, NOT_A_GEOID
 
 
@@ -87,3 +87,63 @@ def test_oz2_rural_absent_is_none_not_false(oz2_checker):
     result = oz2_checker.is_rural("17031840100")
     assert result is None
     assert result is not False
+
+
+# ── OZTract — the tri-state migration reaches the public schema too ──────────
+#
+# 0.2.0 shipped tri-state returns on the checkers but left OZTract's
+# eligibility fields as `bool = False`. OZTract is exported in __all__ and the
+# README lists it under "What still works fully", so a user constructing one
+# got a confident fabricated negative from a public type in the very release
+# that exists to remove them. Fixed by defaulting both to None; pinned here so
+# it cannot regress (nothing in the suite touched OZTract before).
+
+def test_oztract_eligibility_defaults_are_none_not_false():
+    t = OZTract(tract_id="17031010100", state="17", oz_version="oz1")
+    assert t.is_oz1_eligible is None
+    assert t.is_oz2_eligible is None
+    assert t.is_oz1_eligible is not False
+    assert t.is_oz2_eligible is not False
+
+
+def test_oztract_is_active_defaults_to_none_not_false():
+    """is_active forwards the tri-state; an unpopulated tract is "not
+    confirmed", never "not designated"."""
+    t = OZTract(tract_id="17031010100", state="17", oz_version="oz1")
+    assert t.is_active is None
+    assert t.is_active is not False
+
+
+def test_oztract_is_active_true_when_confirmed():
+    t = OZTract(tract_id="17031840100", state="17", oz_version="oz1",
+                is_oz1_eligible=True)
+    assert t.is_active is True
+
+
+def test_oztract_truthiness_rendering_hazard_is_visible():
+    """The A1 hazard in type form: `if t.is_active` collapses None into the
+    same branch as False. The contract requires `is True` / `is None`, and
+    this test documents why by asserting the two are distinguishable."""
+    unknown = OZTract(tract_id="17031010100", state="17", oz_version="oz1")
+    confirmed = OZTract(tract_id="17031840100", state="17", oz_version="oz1",
+                        is_oz1_eligible=True)
+    assert (unknown.is_active is True) is False
+    assert (confirmed.is_active is True) is True
+    assert unknown.is_active is None      # NOT False — "cannot determine"
+
+
+def test_oztract_enhanced_rural_benefits_is_tristate():
+    """False stays False where it is a real fact (a non-rural tract gets no
+    rural benefit regardless of OZ 2.0 status); None where genuinely unknown."""
+    not_rural = OZTract(tract_id="17031840100", state="17", oz_version="oz2",
+                        is_rural=False)
+    assert not_rural.enhanced_rural_benefits is False
+
+    rural_unknown = OZTract(tract_id="17019000100", state="17",
+                            oz_version="oz2", is_rural=True)
+    assert rural_unknown.enhanced_rural_benefits is None
+
+    rural_confirmed = OZTract(tract_id="17019000100", state="17",
+                              oz_version="oz2", is_rural=True,
+                              is_oz2_eligible=True)
+    assert rural_confirmed.enhanced_rural_benefits is True

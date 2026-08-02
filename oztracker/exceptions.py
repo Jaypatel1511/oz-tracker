@@ -18,23 +18,50 @@ collapsed into a fabricated answer.
     └─ OZParseError      # corrupt bytes, HTML error page, missing tract column
 
 Downstream code can catch at either level: ``except OZTrackerError`` for
-anything this package raises, or a specific leaf.
+anything raised BY THIS PACKAGE'S OWN raise sites, or a specific leaf.
+
+What ``except OZTrackerError`` actually covers — and what it does not
+------------------------------------------------------------------
+
+It is worth being precise here, because a base-class catch that is sold as
+"catches everything a load can throw" is a contract this package would not
+deliver. Concretely, on the load path (``load_oz1_tracts`` /
+``load_oz2_eligible_tracts`` / the ``OZ1Checker`` / ``OZ2Checker``
+constructors), ``except OZTrackerError`` covers:
+
+  * transport failures  — 404 / 403 / DNS / timeout / connection reset,
+    wrapped as OZDownloadError with the URL and status in the message
+  * parse failures      — corrupt bytes, an HTML error page served with a
+    200, a workbook with no recognizable tract column, as OZParseError
+  * filesystem failures — an OSError/PermissionError creating the cache
+    directory, or writing/renaming the cached file, as OZDownloadError
+    (added 0.2.0; before that these escaped the base catch untyped)
+
+It does NOT cover, by design:
+
+  * ``KeyboardInterrupt`` and ``SystemExit``. These do not subclass Exception
+    and this package never catches them. A Ctrl-C during a download propagates
+    immediately and no cleanup handler runs — which is correct, and is safe
+    here only because downloads are staged through a ``.part`` file and moved
+    into place with an atomic rename, so an interrupt cannot poison the cache
+    (see data/loader.py).
+  * stdlib argument-validation errors raised when a CALLER passes bad input.
+    These signal a programming error, not a data-acquisition failure, and are
+    reached on entirely different call paths — never from a load or a
+    designation check:
+
+        schema.py:135,137,141,145   ValueError  — OZInvestment field validation
+        portfolio/tracker.py:29     TypeError   — non-OZInvestment given to add()
+        portfolio/tracker.py:31     ValueError  — duplicate investment id
+
+  * anything raised from inside pandas/requests that is neither a
+    ``requests.exceptions.RequestException`` nor an ``OSError`` and escapes
+    before the parse wrapper — the parse wrapper catches broad ``Exception``,
+    so in practice this is limited to the narrow window described above.
 
 EVERY exception class defined in this package subclasses OZTrackerError, and
-every DATA-ACQUISITION raise site in oztracker/ raises one of these (5 sites,
-all in data/loader.py).
-
-The package's remaining 6 raise sites are stdlib argument validation and are
-deliberately NOT in this tree, because they signal a caller's programming error
-rather than a data-acquisition failure and are reached on entirely different
-call paths:
-
-    schema.py:110,112,116,120   ValueError  — OZInvestment field validation
-    portfolio/tracker.py:29     TypeError   — non-OZInvestment passed to add()
-    portfolio/tracker.py:31     ValueError  — duplicate investment id
-
-A consumer wrapping data access in ``except OZTrackerError`` will not miss any
-of those; none can be raised from a load or a designation check.
+every DATA-ACQUISITION raise site in oztracker/ raises one of these (all in
+data/loader.py).
 """
 
 

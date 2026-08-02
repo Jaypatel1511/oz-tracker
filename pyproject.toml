@@ -17,5 +17,28 @@ dependencies = [
     "openpyxl>=3.0.0",
 ]
 
+# Development Status is "3 - Alpha" deliberately, and it is the honest rung.
+# Not "5 - Production/Stable": the headline feature (tract lookup) is
+# non-functional, both upstream URLs are 404, and 0.2.0 is a breaking change.
+# Not "7 - Inactive" (which sbic-tracker correctly uses): oz-tracker is
+# maintained and restoration is planned — see the README Status section, which
+# separates the OZ 1.0 vintage blocker from the OZ 2.0 scope deferral.
+# "3 - Alpha" is what a browser of PyPI needs to see: usable in parts, not to
+# be relied on whole.
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
 [project.urls]
 Homepage = "https://github.com/Jaypatel1511/oz-tracker"

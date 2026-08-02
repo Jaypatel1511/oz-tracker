@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="oz-tracker",
     version="0.2.0",
-    packages=find_packages(),
+    packages=find_packages(exclude=["tests", "tests.*"]),
     install_requires=[
         "pandas>=1.4.0",
         "numpy>=1.21.0",

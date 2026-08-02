@@ -60,26 +60,51 @@ OZ_VERSIONS = {
 
 @dataclass
 class OZTract:
-    """Represents a single Opportunity Zone census tract."""
+    """Represents a single Opportunity Zone census tract.
+
+    The eligibility fields are tri-state (``True`` / ``None``), matching the
+    ``OZ1Checker.is_designated`` / ``OZ2Checker.is_eligible`` contract. They
+    default to ``None`` — "not confirmed" — and NOT to ``False``.
+
+    This changed in 0.2.0. Through 0.1.0 both defaulted to ``bool`` ``False``,
+    so an ``OZTract`` constructed without eligibility data asserted a confident
+    negative it had no basis for: the same fabricated negative this release
+    exists to remove, in a public exported type. Callers must branch on
+    ``is True`` / ``is None``, never on truthiness.
+    """
     tract_id: str                      # 11-digit FIPS code
     state: str
     oz_version: str                    # "oz1", "oz2", or "both"
     is_rural: bool = False
-    is_oz1_eligible: bool = False
-    is_oz2_eligible: bool = False
+    is_oz1_eligible: Optional[bool] = None
+    is_oz2_eligible: Optional[bool] = None
     poverty_rate: Optional[float] = None
     ami_ratio: Optional[float] = None
     oz1_expires: str = "2028-12-31"
     oz2_effective: str = "2027-01-01"
 
     @property
-    def is_active(self) -> bool:
-        """True if currently designated under OZ 1.0."""
+    def is_active(self) -> Optional[bool]:
+        """Tri-state, forwarding ``is_oz1_eligible`` unchanged.
+
+        ``True`` = confirmed designated under OZ 1.0. ``None`` = not confirmed,
+        which is the default and is NOT a negative finding. ``False`` only if a
+        caller explicitly assigned it, in which case it is the caller's own
+        assertion and is passed through rather than reinterpreted.
+        """
         return self.is_oz1_eligible
 
     @property
-    def enhanced_rural_benefits(self) -> bool:
-        """True if eligible for 30% step-up rural benefits."""
+    def enhanced_rural_benefits(self) -> Optional[bool]:
+        """Tri-state: ``True`` if the tract is rural AND confirmed OZ 2.0
+        eligible; ``False`` if it is definitely not rural; ``None`` if rural but
+        OZ 2.0 eligibility is unconfirmed.
+
+        The ``and`` below already produces exactly that — ``False and None`` is
+        ``False`` (a real fact: a non-rural tract gets no rural benefit
+        regardless), ``True and None`` is ``None``. Only the annotation needed
+        widening once ``is_oz2_eligible`` became tri-state.
+        """
         return self.is_rural and self.is_oz2_eligible
 
 

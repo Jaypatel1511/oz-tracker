@@ -40,11 +40,36 @@ value to indicate that no data had been loaded.
   (`OZ1Checker.from_sample()`), and anything built from it is stamped
   `data_source == "sample"`.
 
-**Restoration is deferred**, deliberately. `nmtc-mapper` 0.5.0 is resolving the
-OZ census-tract vintage question (2010-basis designation list vs. current-vintage
-GEOIDs); a second, independent OZ implementation here would re-arm the same trap
-and create two OZ code paths to keep in sync forever. OZ gets solved once,
-elsewhere.
+**Restoration is deferred** — deliberately, and for a *different reason per
+checker*. 0.2.0 restores neither.
+
+- **OZ 1.0 is blocked on the census-tract vintage question.** The Notice
+  2018-48 list is 2018 designations on **2010** tract boundaries, callers hold
+  current-vintage GEOIDs, and the API gives them no way to declare which
+  vintage they mean. `nmtc-mapper` 0.5.0 is resolving that question; a second,
+  independent OZ implementation here would re-arm the same trap and create two
+  OZ code paths to keep in sync forever. OZ 1.0 gets solved once, elsewhere.
+
+- **OZ 2.0 is *not* blocked on vintage.** Rev. Proc. 2026-14 §3.01(1) states
+  the eligible list is derived from the 2020–2024 ACS 5-Year and 2020 DECIA
+  data sets — unambiguously **2020-basis**, the same vintage as a current
+  GEOID, so the OZ 1.0 vintage problem simply does not arise. Its Appendix is
+  live and machine-readable (verified 2026-08-02 at
+  `irs.gov/pub/irs-drop/rp-26-14-appendix.xlsx`: HTTP 200, 25,332 rows,
+  columns `State` / `County` / `Census Tract Number` / `Rural Status`, of which
+  8,334 are flagged Rural — matching the counts stated in §3.01(1)).
+  **OZ 2.0 restoration is deferred purely on scope**: 0.2.0 is a fail-loud
+  release and adds no data paths. There is no unresolved data question behind
+  it.
+
+  Known source for a future cycle, recorded so the next pass does not have to
+  rediscover it: that Appendix — not the dead `home.treasury.gov` URL in
+  `loader.py` — is where OZ 2.0 eligibility comes from. Note it is not a
+  drop-in for the current parser: the tract column is `Census Tract Number`
+  (which the loader's `GEOID` / `CENSUS_TRACT` / `TRACT_ID` / `TRACT` search
+  does not match) and its values have leading zeros stripped, so they need
+  `zfill(11)` before comparison. Rural status is a `Rural` / `Non-rural`
+  string, not a boolean.
 
 **What still works fully:** everything that performs no tract lookup — QOF/QORF
 tax benefit modeling (`calculate_benefits`, `compare_scenarios`), the
@@ -194,14 +219,33 @@ OZ 2.0 (2027 designations):
 
     PYTHONPATH=. pytest tests/ -v
 
-66 tests across all modules, including `tests/test_fail_loud.py` (drives the
+77 tests across all modules, including `tests/test_fail_loud.py` (drives the
 download path end to end and asserts it raises rather than substituting sample
-data) and `tests/test_tristate.py` (pins the `True`/`None` contract).
+data; also pins rename-atomicity of the cache write against a failure no
+handler catches, and that `KeyboardInterrupt` / `SystemExit` are never
+swallowed) and `tests/test_tristate.py` (pins the `True`/`None` contract on
+both the checkers and the `OZTract` schema defaults).
 
-Note: `examples/oz_investment_demo.ipynb` was written against the 0.1.0 API and
-calls `OZ1Checker()` / `OZ2Checker()` directly. Those now raise, so the notebook
-does not run end to end in 0.2.0. It has not been rewritten pending the data
-restoration.
+The suite is network-isolated — every test that touches the download path stubs
+`requests.get`, and the cache is redirected to `tmp_path`, so no test reaches
+the network or the developer's real `~/.oztracker/cache`.
+
+### The example notebook
+
+`examples/oz_investment_demo.ipynb` **runs end to end in 0.2.0** and is
+executed as part of preparing a release. It was rewritten for this version:
+
+- tract sections use `OZ1Checker.from_sample()` / `OZ2Checker.from_sample()`
+  behind a prominent provenance banner, so the notebook runs offline without
+  ever implying the synthetic set is the designation list;
+- results render tri-state via an explicit `is True` / `is None` helper —
+  `None` prints **NOT CONFIRMED**, never "NO". The previous version used
+  `"YES" if designated else "NO"`, which, because `None` is falsy, printed a
+  confident "NO" for every tract the package could not answer for — the
+  fabricated negative this release exists to remove, reappearing in the
+  package's own example;
+- a new section 0 demonstrates `OZ1Checker()` raising `OZDownloadError`, so the
+  headline 0.2.0 behavior is shown rather than hidden.
 
 ---
 
