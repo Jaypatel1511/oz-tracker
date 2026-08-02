@@ -7,6 +7,7 @@ import pandas as pd
 
 from oztracker.data.schema import OZInvestment, FUND_TYPES, OZ_VERSIONS
 from oztracker.benefits.qof import calculate_benefits
+from oztracker.exceptions import OZCalculationError
 
 
 class OZPortfolio:
@@ -73,12 +74,62 @@ class OZPortfolio:
         return sum(i.capital_gain_invested for i in self._investments
                    if i.is_rural)
 
-    def total_tax_benefits(self, tax_rate: float = 0.238) -> float:
-        total = 0.0
+    def _partition_benefits(self, tax_rate: float = 0.238) -> tuple:
+        """Split members into (computed, undeterminable).
+
+        ``computed`` is [(investment, QOFBenefits)], ``undeterminable`` is
+        [(investment, reason)]. The rule for what is determinable lives in one
+        place — the raise site in ``calculate_benefits`` — and this partitions
+        by catching it, rather than duplicating the date logic here where the
+        two could drift apart.
+        """
+        computed, undeterminable = [], []
         for inv in self._investments:
-            benefits = calculate_benefits(inv, tax_rate=tax_rate)
-            total += benefits.total_tax_benefit
-        return total
+            try:
+                computed.append((inv, calculate_benefits(inv, tax_rate=tax_rate)))
+            except OZCalculationError as e:
+                undeterminable.append((inv, str(e)))
+        return computed, undeterminable
+
+    def undeterminable_benefits(self, tax_rate: float = 0.238) -> list:
+        """Return [(investment, reason)] for members whose benefit cannot be
+        computed — e.g. a future-dated investment with no exit_date.
+
+        Lets a caller check coverage without catching exceptions, and is what
+        ``summary()`` uses to report exclusions by name instead of dropping
+        them.
+        """
+        return self._partition_benefits(tax_rate)[1]
+
+    def total_tax_benefits(self, tax_rate: float = 0.238) -> float:
+        """Total tax benefit across the portfolio.
+
+        Raises OZCalculationError if ANY member's benefit is not determinable.
+
+        This refuses rather than returning a subtotal because the return type
+        is a bare ``float``: it has nowhere to carry "this covers 2 of your 3
+        investments", so a caller doing ``p.total_tax_benefits()`` would get a
+        number that looks complete and is not. Silently skipping the
+        undeterminable members would understate the total with no signal —
+        the aggregate equivalent of the fabricated negative this release
+        removes.
+
+        For a portfolio that legitimately contains not-yet-made investments,
+        either supply exit dates, or use ``summary()`` (which reports the
+        determinable subtotal explicitly scoped), or partition it yourself via
+        ``undeterminable_benefits()``.
+        """
+        computed, undeterminable = self._partition_benefits(tax_rate)
+        if undeterminable:
+            ids = ", ".join(repr(inv.id) for inv, _ in undeterminable)
+            raise OZCalculationError(
+                f"Cannot total tax benefits for portfolio {self.name!r}: "
+                f"{len(undeterminable)} of {len(self._investments)} "
+                f"investment(s) have no determinable holding period ({ids}). "
+                f"Refusing to return a subtotal that would read as a complete "
+                f"total. First reason: {undeterminable[0][1]}"
+            )
+        return sum(b.total_tax_benefit for _, b in computed)
 
     def summary(self, tax_rate: float = 0.238) -> None:
         print(f"\nOZ Investment Portfolio — {self.name}")
@@ -90,12 +141,43 @@ class OZPortfolio:
         print(f"  OZ 2.0 Investments:    ${self.oz2_invested/1e6:.2f}MM")
         print(f"  Rural QORF:            ${self.rural_invested/1e6:.2f}MM")
 
-        total_benefit = self.total_tax_benefits(tax_rate)
+        # Unlike total_tax_benefits(), a printed report CAN carry the caveat —
+        # so summary() states coverage rather than refusing. What it must never
+        # do is print a bare "Total Tax Benefit" that quietly omits members.
+        computed, undeterminable = self._partition_benefits(tax_rate)
+        covered_gain = sum(i.capital_gain_invested for i, _ in computed)
+        total_benefit = sum(b.total_tax_benefit for _, b in computed)
+
         print(f"\nTAX BENEFITS (est. @ {tax_rate*100:.1f}% cap gains rate)")
-        print(f"  Total Tax Benefit:     ${total_benefit/1e6:.2f}MM")
-        if self.total_invested > 0:
-            print(f"  Benefit as % of Gain:  "
-                  f"{total_benefit/self.total_invested*100:.1f}%")
+        if undeterminable:
+            print(f"  ⚠ PARTIAL — covers {len(computed)} of "
+                  f"{len(self._investments)} investments "
+                  f"(${covered_gain/1e6:.2f}MM of "
+                  f"${self.total_invested/1e6:.2f}MM in capital gains).")
+            print(f"    This is NOT a portfolio total. See NOT DETERMINABLE below.")
+        if computed:
+            label = ("Benefit (covered subset):" if undeterminable
+                     else "Total Tax Benefit:    ")
+            print(f"  {label} ${total_benefit/1e6:.2f}MM")
+            if covered_gain > 0:
+                pct_label = ("% of covered gain:  " if undeterminable
+                             else "Benefit as % of Gain:")
+                print(f"  {pct_label}   "
+                      f"{total_benefit/covered_gain*100:.1f}%")
+        else:
+            print(f"  No benefit figure can be computed for any investment "
+                  f"in this portfolio.")
+
+        if undeterminable:
+            print(f"\nNOT DETERMINABLE ({len(undeterminable)} of "
+                  f"{len(self._investments)})")
+            print(f"  These investments are EXCLUDED from the figure above and "
+                  f"are not zero —")
+            print(f"  their benefit has no answer from the inputs given:")
+            for inv, reason in undeterminable:
+                print(f"    • {inv.id} ({inv.fund_name}): "
+                      f"${inv.capital_gain_invested/1e6:.2f}MM")
+                print(f"      {reason}")
 
         states = set(i.state for i in self._investments if i.state)
         if states:

@@ -14,8 +14,9 @@ caught error tells the caller what actually went wrong rather than being
 collapsed into a fabricated answer.
 
     OZTrackerError
-    ├─ OZDownloadError   # 404 / 403 / DNS / timeout / connection
-    └─ OZParseError      # corrupt bytes, HTML error page, missing tract column
+    ├─ OZDownloadError    # 404 / 403 / DNS / timeout / connection
+    ├─ OZParseError       # corrupt bytes, HTML error page, missing tract column
+    └─ OZCalculationError # the question asked has no determinable answer
 
 Downstream code can catch at either level: ``except OZTrackerError`` for
 anything raised BY THIS PACKAGE'S OWN raise sites, or a specific leaf.
@@ -62,6 +63,12 @@ It does NOT cover, by design:
 EVERY exception class defined in this package subclasses OZTrackerError, and
 every DATA-ACQUISITION raise site in oztracker/ raises one of these (all in
 data/loader.py).
+
+Off the load path, OZCalculationError is raised by the benefit calculator and
+the portfolio aggregate when the answer is not determinable from the inputs
+(see that class). It is in this tree, so ``except OZTrackerError`` catches it,
+but it is reached on a different call path and signals something different: not
+"I could not get the data" but "the question you asked has no answer".
 """
 
 
@@ -86,8 +93,26 @@ class OZParseError(OZTrackerError):
     understood file must never answer an eligibility question."""
 
 
+class OZCalculationError(OZTrackerError):
+    """A calculation was requested whose answer is not determinable from the
+    inputs given (added 0.2.0).
+
+    NOT a data-acquisition failure and not on the load path — this is the
+    arithmetic half of the package refusing an ill-posed question rather than
+    returning a number for it.
+
+    The case that motivated it: ``calculate_benefits()`` defaults the exit date
+    to today, so an investment dated in the FUTURE produced a negative holding
+    period and a negative "tax benefit" (-0.62 years, -$733 for the README's
+    own 2027 example). The honest response is neither that negative figure nor
+    a clamp to zero — a confident $0.00 for a question with no answer is the
+    same fabrication class as a confident ``False`` for a tract nobody looked
+    up. So it raises, and the message says which date to supply."""
+
+
 __all__ = [
     "OZTrackerError",
     "OZDownloadError",
     "OZParseError",
+    "OZCalculationError",
 ]

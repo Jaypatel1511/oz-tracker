@@ -80,6 +80,72 @@ fabricate anything).
 
 ---
 
+## Undeterminable holding periods
+
+The same "refuse rather than invent" rule applies to the arithmetic half of the
+package, not just to tract lookup.
+
+`calculate_benefits()` defaults its exit date to today. If the investment date
+is in the **future**, there is no holding period to measure, and every
+downstream figure is meaningless. Through 0.2.0 this was unguarded: the
+README's own 2027 example returned `holding_years -0.62` and
+`total_tax_benefit -$733`, and `OZPortfolio.summary()` printed
+`Total Tax Benefit: $-0.00MM  /  Benefit as % of Gain: -0.1%`.
+
+It now raises `OZCalculationError`, naming the investment and both dates:
+
+    calculate_benefits(inv)                       # inv dated 2027, no exit_date
+    # OZCalculationError: Cannot calculate benefits for investment 'INV001'
+    # ('Midwest OZ Fund I'): no holding period exists. exit_date was not
+    # supplied, so it defaulted to today (2026-08-02), which is BEFORE the
+    # investment date 2027-03-15 — this investment has not been made yet.
+    # Pass an explicit exit_date to model it.
+
+    calculate_benefits(inv, exit_date="2037-03-15")   # answerable → computes
+
+**It is not clamped to zero.** A confident `$0.00` for a question with no
+answer is the same fabrication class as a confident `False` for a tract nobody
+looked up — a real-looking figure standing in for "unknown", which a caller
+cannot distinguish from a genuine zero-benefit result.
+
+A same-day exit is *not* an error: zero length is a real answer, and only a
+negative period is refused.
+
+### What a portfolio does about it
+
+The two entry points differ deliberately, because their return types differ:
+
+| | behavior when a member is undeterminable |
+|---|---|
+| `total_tax_benefits()` | **raises** `OZCalculationError`, naming the offending ids and the count |
+| `summary()` | **prints a scoped partial**, and names every excluded investment |
+| `undeterminable_benefits()` | returns `[(investment, reason)]` — check coverage without catching |
+
+`total_tax_benefits()` returns a bare `float`, which has nowhere to carry
+"this covers 2 of your 3 investments" — so returning a subtotal would hand back
+a number that reads as complete and is not. It refuses.
+
+`summary()` prints a report, which *can* carry the caveat, so it does rather
+than refusing:
+
+    TAX BENEFITS (est. @ 23.8% cap gains rate)
+      ⚠ PARTIAL — covers 1 of 3 investments ($0.75MM of $1.50MM in capital gains).
+        This is NOT a portfolio total. See NOT DETERMINABLE below.
+      Benefit (covered subset): $0.03MM
+      % of covered gain:     3.5%
+
+    NOT DETERMINABLE (2 of 3)
+      These investments are EXCLUDED from the figure above and are not zero —
+      their benefit has no answer from the inputs given:
+        • P002 (Rural Illinois QORF): $0.50MM
+          ...
+
+Neither silently drops a member, and neither presents a partial aggregate as a
+complete one. When every member is determinable, `summary()` prints the
+ordinary `Total Tax Benefit:` line unchanged.
+
+---
+
 ## The tri-state contract
 
     from oztracker import OZ1Checker, OZDownloadError
@@ -219,7 +285,10 @@ OZ 2.0 (2027 designations):
 
     PYTHONPATH=. pytest tests/ -v
 
-77 tests across all modules, including `tests/test_fail_loud.py` (drives the
+94 tests across all modules, including `tests/test_holding_period.py`
+(pins the undeterminable-holding-period contract on both the individual and the
+portfolio path, and is mutation-checked against both a clamp-to-zero and a
+silent-skip implementation), `tests/test_fail_loud.py` (drives the
 download path end to end and asserts it raises rather than substituting sample
 data; also pins rename-atomicity of the cache write against a failure no
 handler catches, and that `KeyboardInterrupt` / `SystemExit` are never

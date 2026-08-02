@@ -3,6 +3,8 @@ QOF (Qualified Opportunity Fund) tax benefit calculator.
 Handles both OZ 1.0 and OZ 2.0 benefit structures.
 """
 from datetime import datetime
+
+from oztracker.exceptions import OZCalculationError
 from oztracker.data.schema import (
     OZInvestment, QOFBenefits,
     OZ1_5YR_STEPUP_PCT, OZ1_7YR_STEPUP_PCT,
@@ -34,12 +36,52 @@ def calculate_benefits(
 
     Returns:
         QOFBenefits with full tax benefit breakdown
+
+    Raises:
+        OZCalculationError: if the exit/valuation date precedes the investment
+            date, so no holding period exists. Most often hit by leaving
+            ``exit_date`` unset on a FUTURE-dated investment, which silently
+            measured the holding period from today and went negative — see
+            below.
     """
     fmv = current_fmv or investment.current_fmv or investment.fmv_at_investment
 
     inv_date = datetime.strptime(investment.investment_date, "%Y-%m-%d")
+    defaulted_to_today = exit_date is None
     exit_dt = (datetime.strptime(exit_date, "%Y-%m-%d")
                if exit_date else datetime.today())
+
+    # ── The holding period must exist before anything can be computed ────────
+    #
+    # Through 0.2.0 this was unguarded: exit_date defaults to today, so an
+    # investment dated in the future produced a NEGATIVE holding period, which
+    # flowed into every downstream figure. The README's own example
+    # (investment_date 2027-03-15, no exit_date) returned holding_years -0.62
+    # and total_tax_benefit -$733, and OZPortfolio.summary() printed
+    # "Total Tax Benefit: $-0.00MM  /  Benefit as % of Gain: -0.1%".
+    #
+    # Not clamped to zero, deliberately. A confident $0.00 for a question with
+    # no answer is the same fabrication class as a confident False for a tract
+    # nobody looked up: it is a real-looking figure standing in for "unknown",
+    # and a caller cannot tell it apart from a genuine zero-benefit result.
+    # This package's whole 0.2.0 contract is that it refuses instead.
+    if exit_dt < inv_date:
+        if defaulted_to_today:
+            detail = (
+                f"exit_date was not supplied, so it defaulted to today "
+                f"({exit_dt:%Y-%m-%d}), which is BEFORE the investment date "
+                f"{inv_date:%Y-%m-%d} — this investment has not been made yet. "
+                f"Pass an explicit exit_date to model it."
+            )
+        else:
+            detail = (
+                f"exit_date {exit_dt:%Y-%m-%d} is before the investment date "
+                f"{inv_date:%Y-%m-%d}."
+            )
+        raise OZCalculationError(
+            f"Cannot calculate benefits for investment {investment.id!r} "
+            f"({investment.fund_name!r}): no holding period exists. {detail}"
+        )
 
     holding_years = (exit_dt - inv_date).days / 365.25
 
