@@ -85,23 +85,52 @@ fabricate anything).
 The same "refuse rather than invent" rule applies to the arithmetic half of the
 package, not just to tract lookup.
 
-`calculate_benefits()` defaults its exit date to today. If the investment date
-is in the **future**, there is no holding period to measure, and every
-downstream figure is meaningless. Through 0.2.0 this was unguarded: the
-README's own 2027 example returned `holding_years -0.62` and
+### Where the exit date comes from
+
+`calculate_benefits()` resolves it in this order:
+
+    exit_date=  argument   ->   investment.exit_date   ->   today
+
+mirroring how `current_fmv` already falls back to `investment.current_fmv`.
+When both are supplied the **argument wins** — the field is the exit on record
+for that investment, the argument is the exit you are modelling on this call,
+and the more specific per-call input takes precedence.
+
+The middle leg is new. `OZInvestment.exit_date` has existed since 0.1.0 and
+was never read, so an investment carrying its own realized exit date was
+measured to *today* anyway and, if dated in the future, **refused** — told it
+had omitted a field it had supplied, and handed a remedy it had already
+applied. A portfolio of fully-specified investments reported 100% NOT
+DETERMINABLE. That false refusal is the mirror image of the fabrication this
+release exists to remove: asserting "no answer exists from these inputs" when
+the inputs contain the answer is exactly as wrong as inventing a figure.
+
+### When there genuinely is no holding period
+
+If the resolved exit date precedes the investment date, there is nothing to
+measure and every downstream figure is meaningless. Through 0.2.0 this was
+unguarded: the README's own 2027 example returned `holding_years -0.62` and
 `total_tax_benefit -$733`, and `OZPortfolio.summary()` printed
 `Total Tax Benefit: $-0.00MM  /  Benefit as % of Gain: -0.1%`.
 
-It now raises `OZCalculationError`, naming the investment and both dates:
+It now raises `OZCalculationError`, naming the investment, both dates, and
+**which of the two inputs the offending date came from**:
 
-    calculate_benefits(inv)                       # inv dated 2027, no exit_date
+    calculate_benefits(inv)          # inv dated 2027, no exit_date anywhere
     # OZCalculationError: Cannot calculate benefits for investment 'INV001'
     # ('Midwest OZ Fund I'): no holding period exists. exit_date was not
-    # supplied, so it defaulted to today (2026-08-02), which is BEFORE the
-    # investment date 2027-03-15 — this investment has not been made yet.
-    # Pass an explicit exit_date to model it.
+    # supplied — neither as an argument nor on the investment — so it
+    # defaulted to today (2026-08-02), which is BEFORE the investment date
+    # 2027-03-15: this investment has not been made yet. Pass exit_date=...,
+    # or set investment.exit_date, to model it.
 
     calculate_benefits(inv, exit_date="2037-03-15")   # answerable → computes
+    inv.exit_date = "2037-03-15"; calculate_benefits(inv)   # also answerable
+
+The "not supplied" wording appears **only** when neither source supplied one.
+An inverted argument and an inverted field each get their own message naming
+that source, because telling a caller they omitted an input they provided is
+itself a false statement about their data.
 
 **It is not clamped to zero.** A confident `$0.00` for a question with no
 answer is the same fabrication class as a confident `False` for a tract nobody
@@ -131,8 +160,8 @@ than refusing:
     TAX BENEFITS (est. @ 23.8% cap gains rate)
       ⚠ PARTIAL — covers 1 of 3 investments ($0.75MM of $1.50MM in capital gains).
         This is NOT a portfolio total. See NOT DETERMINABLE below.
-      Benefit (covered subset): $0.03MM
-      % of covered gain:     3.5%
+      Benefit (covered subset): $0.12MM
+      % of covered gain:     15.4%
 
     NOT DETERMINABLE (2 of 3)
       These investments are EXCLUDED from the figure above and are not zero —
@@ -140,9 +169,21 @@ than refusing:
         • P002 (Rural Illinois QORF): $0.50MM
           ...
 
-Neither silently drops a member, and neither presents a partial aggregate as a
-complete one. When every member is determinable, `summary()` prints the
-ordinary `Total Tax Benefit:` line unchanged.
+The percentage is computed against the **covered** gain ($0.75MM), not the
+portfolio total ($1.50MM) — the line says "of covered gain" and means it.
+Against the full denominator the same portfolio reads 7.7%, a figure whose
+label would contradict its value.
+
+Neither entry point silently drops a member, and neither presents a partial
+aggregate as a complete one. When every member is determinable, `summary()`
+prints the ordinary `Total Tax Benefit:` line unchanged.
+
+**An empty portfolio is not a partial one.** `total_tax_benefits()` returns
+`0.0` and `summary()` prints the ordinary `Total Tax Benefit: $0.00MM`. Its
+benefit is a genuine zero — the sum of no benefits — and not a question
+without an answer; nothing is excluded because there is nothing to exclude.
+That is a different claim from "there are investments here whose benefit has
+no answer", which is what the refusal above means.
 
 ---
 
@@ -174,6 +215,14 @@ in a new coat.
 
 **A `True` is a fact; the absence of a `True` is "not confirmed", not "not
 designated."** Branch on `is True` / `is None` — never on truthiness alone.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). It documents what 0.1.0 got wrong as well as
+what 0.2.0 changed — if you drew conclusions from 0.1.0, that entry tells you
+what needs rechecking.
 
 ---
 
@@ -241,6 +290,10 @@ both OZ 1.0 and OZ 2.0 mechanics — until now.
     p = OZPortfolio(name="Family OZ Portfolio")
     p.add(inv)
     p.summary()
+    # NOTE: `inv` above is dated 2027 and carries no exit_date, so this prints
+    # a NOT DETERMINABLE report rather than a benefit figure — see
+    # "Undeterminable holding periods". Set inv.exit_date = "2037-03-15" (or
+    # pass exit_date= per call) and the same portfolio totals normally.
 
 ---
 
@@ -285,19 +338,26 @@ OZ 2.0 (2027 designations):
 
     PYTHONPATH=. pytest tests/ -v
 
-94 tests across all modules, including `tests/test_holding_period.py`
+118 tests across all modules, including `tests/test_holding_period.py`
 (pins the undeterminable-holding-period contract on both the individual and the
-portfolio path, and is mutation-checked against both a clamp-to-zero and a
-silent-skip implementation), `tests/test_fail_loud.py` (drives the
-download path end to end and asserts it raises rather than substituting sample
-data; also pins rename-atomicity of the cache write against a failure no
-handler catches, and that `KeyboardInterrupt` / `SystemExit` are never
-swallowed) and `tests/test_tristate.py` (pins the `True`/`None` contract on
-both the checkers and the `OZTract` schema defaults).
+portfolio path, where the exit date is resolved from, and the concrete
+percentage on the partial report — mutation-checked against a clamp-to-zero, a
+silent-skip, and a swapped percentage denominator), `tests/test_fail_loud.py`
+(drives the download path end to end and asserts it raises rather than
+substituting sample data; also pins rename-atomicity of the cache write against
+a failure no handler catches, and that `KeyboardInterrupt` / `SystemExit` are
+never swallowed) and `tests/test_tristate.py` (pins the `True`/`None` contract
+on both the checkers and the `OZTract` schema defaults).
 
 The suite is network-isolated — every test that touches the download path stubs
 `requests.get`, and the cache is redirected to `tmp_path`, so no test reaches
 the network or the developer's real `~/.oztracker/cache`.
+
+It is also **wall-clock independent**. Fixture dates live in 2015 and 2099, not
+2027, and every holding-period test supplies an explicit exit date. The 2027
+fixtures made the suite depend on 2027 being in the future: pinning
+`datetime.today()` showed it green at a simulated 2027-04-01 and red from
+2027-06-02 onward. A build with a known future red date is not shippable.
 
 ### The example notebook
 
@@ -306,7 +366,12 @@ executed as part of preparing a release. It was rewritten for this version:
 
 - tract sections use `OZ1Checker.from_sample()` / `OZ2Checker.from_sample()`
   behind a prominent provenance banner, so the notebook runs offline without
-  ever implying the synthetic set is the designation list;
+  ever implying the synthetic set is the designation list. The banner
+  classifies **every** GEOID the notebook prints against the census-tract
+  universes — six are invented, one (`13121010400`) is a real 2010-vintage
+  tract that no longer exists, and four are real and current. An earlier
+  banner disclosed only five of the invented ones, which is worse than
+  disclosing none: a partial list implies the rest were checked and passed;
 - results render tri-state via an explicit `is True` / `is None` helper —
   `None` prints **NOT CONFIRMED**, never "NO". The previous version used
   `"YES" if designated else "NO"`, which, because `None` is falsy, printed a
@@ -314,7 +379,13 @@ executed as part of preparing a release. It was rewritten for this version:
   fabricated negative this release exists to remove, reappearing in the
   package's own example;
 - a new section 0 demonstrates `OZ1Checker()` raising `OZDownloadError`, so the
-  headline 0.2.0 behavior is shown rather than hidden.
+  headline 0.2.0 behavior is shown rather than hidden;
+- the portfolio section demonstrates the **partial** report permanently. Its
+  three investments were all dated 2027, which made the section expire: after
+  2027-09-01 every member would have been determinable and the cells would have
+  shown nothing. One member now carries its own `exit_date` and is covered, two
+  are dated far enough out to stay not-yet-made, so the covered/excluded split
+  is stable regardless of when the notebook runs.
 
 ---
 

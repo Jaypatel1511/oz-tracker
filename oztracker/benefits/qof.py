@@ -30,8 +30,10 @@ def calculate_benefits(
 
     Args:
         investment:  OZInvestment instance
-        current_fmv: Current fair market value of QOF interest
-        exit_date:   Assumed exit date for calculation (default: today)
+        current_fmv: Current fair market value of QOF interest. Falls back to
+                     ``investment.current_fmv``, then ``fmv_at_investment``.
+        exit_date:   Assumed exit date for calculation. Falls back to
+                     ``investment.exit_date``, then today.
         tax_rate:    Assumed capital gains tax rate (default: 23.8%)
 
     Returns:
@@ -39,17 +41,38 @@ def calculate_benefits(
 
     Raises:
         OZCalculationError: if the exit/valuation date precedes the investment
-            date, so no holding period exists. Most often hit by leaving
-            ``exit_date`` unset on a FUTURE-dated investment, which silently
+            date, so no holding period exists. Most often hit on a FUTURE-dated
+            investment with no exit date from EITHER source, which silently
             measured the holding period from today and went negative — see
             below.
     """
     fmv = current_fmv or investment.current_fmv or investment.fmv_at_investment
 
     inv_date = datetime.strptime(investment.investment_date, "%Y-%m-%d")
-    defaulted_to_today = exit_date is None
-    exit_dt = (datetime.strptime(exit_date, "%Y-%m-%d")
-               if exit_date else datetime.today())
+
+    # ── Where the exit date comes from: parameter -> field -> today ───────────
+    #
+    # The field leg was missing through 0.2.0, and OZInvestment has carried an
+    # ``exit_date`` since 0.1.0. An investment holding its own realized exit
+    # date was measured to today anyway and then, if dated in the future,
+    # REFUSED — told it had omitted a field it had supplied, and handed a
+    # remedy it had already applied. A portfolio of fully-specified investments
+    # reported 100% NOT DETERMINABLE.
+    #
+    # That false refusal is the mirror image of the fabrication this release
+    # exists to kill: asserting "no answer exists from these inputs" when the
+    # inputs contain the answer is exactly as wrong as inventing a figure.
+    #
+    # The parameter wins over the field, mirroring how ``current_fmv`` above
+    # already overrides ``investment.current_fmv``: the field is the
+    # investment's recorded exit, the parameter is the what-if being modelled
+    # on this call, and the more specific per-call argument takes precedence.
+    exit_source = ("parameter" if exit_date
+                   else "field" if investment.exit_date
+                   else "today")
+    resolved_exit = exit_date or investment.exit_date
+    exit_dt = (datetime.strptime(resolved_exit, "%Y-%m-%d")
+               if resolved_exit else datetime.today())
 
     # ── The holding period must exist before anything can be computed ────────
     #
@@ -66,17 +89,29 @@ def calculate_benefits(
     # and a caller cannot tell it apart from a genuine zero-benefit result.
     # This package's whole 0.2.0 contract is that it refuses instead.
     if exit_dt < inv_date:
-        if defaulted_to_today:
+        # Every clause below is conditional on WHERE the exit date came from.
+        # The "not supplied" wording is reachable only in the third branch —
+        # asserting it against a caller who did supply one is a false statement
+        # about their own input, and it sends them to fix something that is
+        # already correct.
+        if exit_source == "parameter":
             detail = (
-                f"exit_date was not supplied, so it defaulted to today "
-                f"({exit_dt:%Y-%m-%d}), which is BEFORE the investment date "
-                f"{inv_date:%Y-%m-%d} — this investment has not been made yet. "
-                f"Pass an explicit exit_date to model it."
+                f"the exit_date argument {exit_dt:%Y-%m-%d} is before the "
+                f"investment date {inv_date:%Y-%m-%d}."
+            )
+        elif exit_source == "field":
+            detail = (
+                f"investment.exit_date is {exit_dt:%Y-%m-%d}, which is before "
+                f"the investment date {inv_date:%Y-%m-%d}. One of the two "
+                f"dates on this investment is wrong."
             )
         else:
             detail = (
-                f"exit_date {exit_dt:%Y-%m-%d} is before the investment date "
-                f"{inv_date:%Y-%m-%d}."
+                f"exit_date was not supplied — neither as an argument nor on "
+                f"the investment — so it defaulted to today "
+                f"({exit_dt:%Y-%m-%d}), which is BEFORE the investment date "
+                f"{inv_date:%Y-%m-%d}: this investment has not been made yet. "
+                f"Pass exit_date=..., or set investment.exit_date, to model it."
             )
         raise OZCalculationError(
             f"Cannot calculate benefits for investment {investment.id!r} "
