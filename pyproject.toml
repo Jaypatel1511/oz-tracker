@@ -42,3 +42,13 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/Jaypatel1511/oz-tracker"
+
+[tool.pytest.ini_options]
+# --import-mode=importlib is required, not cosmetic. Under the default "prepend"
+# mode pytest puts the rootdir on sys.path, so `import oztracker` resolves to
+# ./oztracker even when a built wheel is the thing under test — CI would report
+# green for the wheel while actually exercising the source tree. The release
+# workflow also passes this flag explicitly, because the wheel-test job runs the
+# suite from a copied directory that does not contain this file.
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]
